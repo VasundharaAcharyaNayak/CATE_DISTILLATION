@@ -1,1 +1,198 @@
 
+schema_version: 1
+experiment:
+  id: ihdp_npci
+  dataset: IHDP semi-synthetic NPCI
+  data_path_pattern: data/ihdp/ihdp_npci_{realization}.csv
+  realizations:
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  - 6
+  - 7
+  - 8
+  - 9
+  - 10
+  has_header: false
+  column_layout:
+    '0': treatment
+    '1': y_factual
+    '2': y_counterfactual
+    '3': mu0
+    '4': mu1
+    5_plus: 25 pretreatment covariates
+  outcome:
+    column: y_factual
+    type: continuous
+  treatment:
+    column: treatment
+    type: binary
+    control: 0
+    treated: 1
+split:
+  discovery_fraction: 0.6
+  evaluation_fraction: 0.4
+  seed: 7
+  stratify_by_treatment: true
+  expected_sizes_per_realization:
+    analytic_n: 747
+    discovery_n: 448
+    evaluation_n: 299
+covariates:
+  adjustment: all_25_pretreatment_covariates
+  effect_modifiers: all_25_pretreatment_covariates
+  feature_names:
+  - birth_weight
+  - head_circumference
+  - weeks_preterm
+  - birth_order
+  - neonatal_health_index
+  - mother_age
+  - female
+  - twin
+  - mother_married_at_birth
+  - mother_left_high_school
+  - mother_completed_high_school
+  - mother_some_college
+  - first_born
+  - mother_smoked_pregnancy
+  - mother_alcohol_pregnancy
+  - mother_drugs_pregnancy
+  - mother_worked_pregnancy
+  - mother_received_prenatal_care
+  - site_1
+  - site_2
+  - site_3
+  - site_4
+  - site_5
+  - site_6
+  - site_7
+policy:
+  mode: binary_treatment_assignment
+  budget_fraction: 0.7
+  budget_is_maximum: true
+  positive_benefit_only: true
+  min_benefit: 0.0
+  oracle_min_benefit: 0.0
+  budget_population: full_evaluation_cohort
+kprototypes:
+  enabled: true
+  candidate_k:
+  - 2
+  - 3
+  - 4
+  - 5
+  - 6
+  - 7
+  - 8
+  selection_metric: gower_silhouette
+  selected_k: 3
+  numeric_feature_indices_zero_based:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  standalone_binary_indices_zero_based:
+  - 6
+  - 7
+  - 8
+  - 12
+  - 13
+  - 14
+  - 15
+  - 16
+  - 17
+  education_dummy_indices_zero_based:
+  - 9
+  - 10
+  - 11
+  site_dummy_indices_zero_based:
+  - 18
+  - 19
+  - 20
+  - 21
+  - 22
+  - 23
+  - 24
+  standardize_numeric_on_discovery: true
+  collapse_education_dummies: true
+  collapse_site_dummies: true
+  gamma: 0.5 * mean discovery SD after numeric standardization
+  init: Huang
+  n_init: 20
+  min_cluster_fraction: 0.05
+  seed: 7
+causal_tree:
+  enabled: true
+  criterion: causal_mse
+  max_leaf_nodes: 3
+  match_kprototypes_k: true
+  honest_split_fraction: 0.5
+  aipw_folds: 5
+  positive_gain_only: true
+  exact_k_required: true
+  seed: 7
+causal_forest:
+  library: econml
+  model: CausalForestDML
+  selection: outer_discovery_only_tuning
+  selected_params:
+    n_estimators: 400
+    max_depth: null
+    min_samples_leaf: 5
+    max_samples: 0.45
+    max_features: null
+  oof_teacher_folds: 5
+  seed: 7
+students:
+  decision_tree:
+    max_depth: 3
+    min_samples_leaf: 30
+    max_leaf_nodes: 8
+  random_forest:
+    n_estimators: 6
+    max_depth: 6
+    min_samples_leaf: 4
+  seed: 7
+bcf:
+  selection: fixed_literature_guided
+  outcome_model: continuous
+  oof_folds: 5
+  num_gfr: 10
+  num_mcmc: 1000
+  general:
+    propensity_covariate: prognostic
+    adaptive_coding: true
+    keep_every: 2
+    standardize: true
+    num_threads: 1
+  prognostic_forest:
+    num_trees: 200
+    alpha: 0.95
+    beta: 2.0
+    min_samples_leaf: 5
+    max_depth: 8
+  treatment_effect_forest:
+    num_trees: 50
+    alpha: 0.25
+    beta: 3.0
+    min_samples_leaf: 5
+    max_depth: 5
+evaluation:
+  primary_ground_truth_metrics:
+  - PEHE
+  - true_policy_value
+  - policy_regret
+  - oracle_top_q_jaccard
+  - spearman_to_ground_truth
+  - kendall_to_ground_truth
+  secondary_dr_evaluation: true
+  dr_folds: 5
+  overlap_trim: 0.05
+  bootstrap_replicates: 500
+  bootstrap_seed: 0
+  paired_bootstrap: true
