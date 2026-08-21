@@ -1,0 +1,145 @@
+schema_version: 1
+experiment:
+  id: pima_bmi
+  dataset: PIMA Indians Diabetes
+  data_path: data/pima.csv
+  outcome:
+    column: Outcome
+    type: binary
+    adverse_value: 1
+  treatment:
+    column: T_obese
+    source_column: BMI
+    definition: BMI >= 30
+    threshold: 30.0
+    adverse_state: 1
+    target_state: 0
+split:
+  discovery_fraction: 0.6
+  evaluation_fraction: 0.4
+  seed: 70
+  expected_sizes:
+    analytic_n: 757
+    discovery_n: 454
+    evaluation_n: 303
+    evaluation_eligible_n: 190
+covariates:
+  adjustment:
+  - Age
+  - Pregnancies
+  - DiabetesPedigreeFunction
+  effect_modifiers:
+  - Age
+  - Pregnancies
+  - DiabetesPedigreeFunction
+  clustering:
+  - Age
+  - Pregnancies
+  - DiabetesPedigreeFunction
+policy:
+  mode: selective_state_shift
+  shift: T=1 -> T=0
+  budget_fraction: 0.7
+  budget_is_maximum: true
+  positive_benefit_only: true
+  min_benefit: 0.0
+  eligibility: T == 1
+  shift_probability_scope: full_evaluation_cohort
+kmeans:
+  enabled: true
+  standardize_on_discovery: true
+  candidate_k:
+  - 2
+  - 3
+  - 4
+  - 5
+  - 6
+  - 7
+  - 8
+  - 9
+  selection_metric: silhouette
+  selected_k: 3
+  init: k-means++
+  n_init: 50
+  seed: 0
+  ranking: aggregate_gain
+  gain: mean_benefit * eligible_count
+  positive_gain_only: true
+causal_tree:
+  enabled: true
+  criterion: causal_mse
+  max_leaf_nodes: 3
+  match_kmeans_k: true
+  honest_split_fraction: 0.5
+  aipw_folds: 5
+  positive_gain_only: true
+  preferred_min_group_samples: 5
+  preferred_min_samples_leaf: 10
+  seed: 7
+causal_forest:
+  library: econml
+  model: CausalForestDML
+  selection: discovery_only_r_score_tuning
+  tuning_folds: 5
+  selected_params:
+    n_estimators: 300
+    max_depth: null
+    min_samples_split: 10
+    min_samples_leaf: 5
+  oof_teacher_folds: 5
+  seed: 7
+students:
+  selection: cross_validated_r2_to_oof_cf_teacher
+  cv_folds: 5
+  decision_tree:
+    max_depth: 6
+    min_samples_leaf: 10
+    max_leaf_nodes: 12
+  random_forest:
+    n_estimators: 6
+    max_depth: 6
+    min_samples_leaf: 4
+    max_leaf_nodes: null
+  reuse_same_capacity_for_bcf: true
+  seed: 7
+bcf:
+  selection: fixed_literature_guided
+  outcome_model: binary
+  link: probit
+  oof_folds: 5
+  num_gfr: 10
+  num_mcmc: 1000
+  general:
+    propensity_covariate: prognostic
+    adaptive_coding: true
+    keep_every: 2
+    standardize: true
+    num_threads: 1
+  prognostic_forest:
+    num_trees: 200
+    alpha: 0.95
+    beta: 2.0
+    min_samples_leaf: 5
+    max_depth: 8
+  treatment_effect_forest:
+    num_trees: 50
+    alpha: 0.25
+    beta: 3.0
+    min_samples_leaf: 5
+    max_depth: 5
+    delta_max: 0.9
+  students_retuned_for_bcf: false
+evaluation:
+  dr_estimator: selective_one_way_shift
+  dr_folds: 5
+  overlap_trim: 0.05
+  propensity_model: logistic_regression
+  target_state_outcome_model: logistic_regression
+  bootstrap_replicates: 500
+  bootstrap_seed: 0
+  paired_bootstrap: true
+  holm_adjustment: true
+  holm_family_size: 8
+  boundary_kendall:
+    enabled: true
+    teacher_quantile_half_width: 0.05
