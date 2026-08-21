@@ -5,7 +5,7 @@ from src.data import (
 )
 
 
-config = load_config("configs/glucose.yaml")
+config = load_config("config/glucose.yaml")
 
 df = load_observational_data(config)
 
