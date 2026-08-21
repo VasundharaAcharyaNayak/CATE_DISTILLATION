@@ -1,0 +1,156 @@
+schema_version: 1
+experiment:
+  id: nhanes_smoking_history
+  dataset: NHANES 2015-2020 pre-pandemic
+  data_path: data/nhanes_smoking.csv
+  outcome:
+    column: SLEEP_DISTURBANCE
+    type: binary
+    adverse_value: 1
+  treatment:
+    column: SMQ_2G
+    definition: reported >=100 cigarettes during lifetime
+    adverse_state: 1
+    target_state: 0
+split:
+  discovery_fraction: 0.6
+  evaluation_fraction: 0.4
+  seed: 70
+  expected_sizes:
+    analytic_n: 7217
+    discovery_n: 4330
+    evaluation_n: 2887
+    evaluation_eligible_n: 1273
+covariates:
+  adjustment:
+  - RIAGENDR
+  - INDFMPIR_2G
+  - Age_Category_4G
+  - Race_Label
+  effect_modifiers:
+  - RIAGENDR
+  - DMDEDUC2_Mapped1
+  - INDFMPIR_2G
+  - Age_Category_4G
+  - Race_Label
+  - EPILEPSY_2G
+  clustering: MCA representation of effect_modifiers
+preprocessing:
+  complete_case: true
+  categorical_effect_modifiers: true
+  one_hot_fit_on_discovery: true
+  mca:
+    enabled_for_subgroup_models: true
+    n_components: 7
+    seed: 7
+    fit_on_discovery_only: true
+  teacher_student_representation: discovery-fitted one-hot effect modifiers
+  dr_adjustment_representation: discovery-fitted one-hot adjustment variables
+policy:
+  mode: selective_state_shift
+  shift: T=1 -> T=0
+  budget_fraction: 0.7
+  budget_is_maximum: true
+  positive_benefit_only: true
+  min_benefit: 0.0
+  eligibility: T == 1
+  shift_probability_scope: full_evaluation_cohort
+kmeans:
+  enabled: true
+  space: 7-component MCA
+  candidate_k:
+  - 2
+  - 3
+  - 4
+  - 5
+  - 6
+  selection_metric: silhouette
+  selected_k: 6
+  init: k-means++
+  n_init: 50
+  seed: 0
+  ranking: aggregate_gain
+  gain: mean_benefit * eligible_count
+  positive_gain_only: true
+causal_tree:
+  enabled: true
+  space: 7-component MCA
+  criterion: causal_mse
+  max_leaf_nodes: 6
+  match_kmeans_k: true
+  honest_split_fraction: 0.5
+  aipw_folds: 5
+  positive_gain_only: true
+  preferred_min_group_samples: 20
+  preferred_min_samples_leaf: 50
+  seed: 7
+causal_forest:
+  library: econml
+  model: CausalForestDML
+  selection: discovery_only_r_score_tuning
+  tuning_folds: 5
+  selected_params:
+    n_estimators: 200
+    max_depth: 10
+    min_samples_split: 20
+    min_samples_leaf: 20
+    max_samples: 0.45
+    max_features: null
+    subforest_size: 4
+  oof_teacher_folds: 5
+  seed: 7
+students:
+  selection: cross_validated_r2_to_oof_cf_teacher
+  cv_folds: 5
+  decision_tree:
+    max_depth: 4
+    min_samples_leaf: 25
+    max_leaf_nodes: 10
+  random_forest:
+    n_estimators: 8
+    max_depth: 5
+    min_samples_leaf: 50
+    max_leaf_nodes: 12
+  reuse_same_capacity_for_bcf: true
+  seed: 7
+bcf:
+  selection: fixed_literature_guided
+  outcome_model: binary
+  link: probit
+  oof_folds: 5
+  num_gfr: 10
+  num_mcmc: 1000
+  general:
+    propensity_covariate: prognostic
+    adaptive_coding: true
+    keep_every: 2
+    standardize: true
+    num_threads: 1
+  prognostic_forest:
+    num_trees: 200
+    alpha: 0.95
+    beta: 2.0
+    min_samples_leaf: 5
+    max_depth: 8
+  treatment_effect_forest:
+    num_trees: 50
+    alpha: 0.25
+    beta: 3.0
+    min_samples_leaf: 5
+    max_depth: 5
+    delta_max: 0.9
+  students_retuned_for_bcf: false
+evaluation:
+  dr_estimator: selective_one_way_shift
+  dr_folds: 5
+  overlap_trim: 0.05
+  propensity_model: logistic_regression
+  target_state_outcome_model: logistic_regression
+  bootstrap_replicates: 500
+  bootstrap_seed: 0
+  paired_bootstrap: true
+  holm_adjustment: true
+  holm_family_size: 8
+  boundary_kendall:
+    enabled: true
+    teacher_quantile_half_width: 0.05
