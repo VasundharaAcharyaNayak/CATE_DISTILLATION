@@ -24,7 +24,8 @@ def individual_policy_allocation(
     # ---------------------------------------------------------
     # Basic checks
     # ---------------------------------------------------------
-
+    benefit_scores = np.asarray(benefit_scores, dtype=float)
+    treatment = np.asarray(treatment)
     if benefit_scores.ndim != 1 or treatment.ndim != 1:
         raise ValueError(
             "benefit_scores and treatment must be one-dimensional."
