@@ -2,26 +2,14 @@ import numpy as np
 
 
 def get_budget_count(n_eligible, budget_fraction):
-    """
-    Maximum number of eligible individuals that can be prioritized.
+   
+    if n_eligible < 0:
+        raise ValueError("n_eligible must be non-negative.")
 
-    Parameters
-    ----------
-    n_eligible : int
-        Number of currently eligible individuals.
-
-    budget_fraction : float
-        Maximum fraction of eligible individuals that may be prioritized.
-
-    Returns
-    -------
-    int
-        Maximum intervention count.
-    """
     if not 0 <= budget_fraction <= 1:
         raise ValueError("budget_fraction must be between 0 and 1.")
 
-    return int(np.floor(budget_fraction * n_eligible))
+    return float(budget_fraction * n_eligible)
 
 
 def individual_policy_allocation(
@@ -31,77 +19,67 @@ def individual_policy_allocation(
     positive_benefit_only=True,
     min_benefit=0.0,
 ):
-    """
-    Construct a budget-constrained individualized policy.
+ 
 
-    The learned benefit scores are applied to the evaluation cohort.
-    Currently eligible individuals (T=1) are ranked by predicted benefit,
-    and up to q * N_eligible are prioritized.
+    # ---------------------------------------------------------
+    # Basic checks
+    # ---------------------------------------------------------
 
-    The budget is a maximum rather than a compulsory quota. Therefore,
-    individuals with non-positive predicted benefit are not selected merely
-    to exhaust the available capacity.
-
-    Parameters
-    ----------
-    benefit_scores : array-like
-        Predicted intervention benefit for each individual.
-
-    treatment : array-like
-        Binary treatment/state indicator. T=1 denotes currently eligible
-        individuals.
-
-    budget_fraction : float, default=0.70
-        Maximum fraction of eligible individuals that may be prioritized.
-
-    positive_benefit_only : bool, default=True
-        If True, only individuals with benefit > min_benefit are considered.
-
-    min_benefit : float, default=0.0
-        Minimum predicted benefit required for prioritization.
-
-    Returns
-    -------
-    allocation : np.ndarray
-        Array of length N. Values are 1 for prioritized eligible
-        individuals and 0 otherwise.
-
-    details : dict
-        Summary of the allocation.
-    """
-    benefit_scores = np.asarray(benefit_scores, dtype=float)
-    treatment = np.asarray(treatment)
+    if benefit_scores.ndim != 1 or treatment.ndim != 1:
+        raise ValueError(
+            "benefit_scores and treatment must be one-dimensional."
+        )
 
     if len(benefit_scores) != len(treatment):
         raise ValueError(
             "benefit_scores and treatment must have the same length."
         )
 
-    # Currently eligible population
-    eligible = treatment == 1
-    eligible_indices = np.flatnonzero(eligible)
+    if not np.all(np.isin(treatment, [0, 1])):
+        raise ValueError(
+            "treatment must contain only binary values 0 and 1."
+        )
+
+    if not np.all(np.isfinite(benefit_scores)):
+        raise ValueError(
+            "benefit_scores contains missing or non-finite values."
+        )
+
+    # We start with zero allocation for everyone.
+    allocation = np.zeros(len(treatment), dtype=float)
+
+    # ---------------------------------------------------------
+    # Identify currently eligible individuals
+    # ---------------------------------------------------------
+
+    eligible_indices = np.flatnonzero(treatment == 1)
 
     n_eligible = len(eligible_indices)
 
-    budget_count = get_budget_count(
+    target_count = get_budget_count(
         n_eligible=n_eligible,
         budget_fraction=budget_fraction,
     )
 
-    # Start with nobody prioritized
-    allocation = np.zeros(len(treatment), dtype=float)
-
-    if n_eligible == 0 or budget_count == 0:
-        return allocation, {
+    # No eligible individuals or zero intervention capacity.
+    if n_eligible == 0 or target_count <= 0:
+        details = {
             "n_eligible": n_eligible,
-            "budget_count": budget_count,
+            "target_count": target_count,
             "n_positive_eligible": 0,
-            "n_prioritized": 0,
+            "expected_allocated": 0.0,
+            "boundary_score": None,
+            "boundary_probability": 0.0,
         }
+
+        return allocation, details
+
+    # ---------------------------------------------------------
+    # Apply positive-benefit restriction
+    # ---------------------------------------------------------
 
     eligible_scores = benefit_scores[eligible_indices]
 
-    # Positive-benefit restriction
     if positive_benefit_only:
         admissible_mask = eligible_scores > min_benefit
     else:
@@ -115,33 +93,120 @@ def individual_policy_allocation(
 
     n_positive_eligible = len(admissible_indices)
 
+    # No eligible individual has admissible benefit.
     if n_positive_eligible == 0:
-        return allocation, {
+        details = {
             "n_eligible": n_eligible,
-            "budget_count": budget_count,
+            "target_count": target_count,
             "n_positive_eligible": 0,
-            "n_prioritized": 0,
+            "expected_allocated": 0.0,
+            "boundary_score": None,
+            "boundary_probability": 0.0,
         }
 
-    # Rank eligible individuals from highest to lowest predicted benefit
-    order = np.argsort(-admissible_scores, kind="stable")
+        return allocation, details
 
-    ranked_indices = admissible_indices[order]
+    # ---------------------------------------------------------
+    # If positive-benefit individuals do not exhaust capacity,
+    # allocate all of them.
+    # ---------------------------------------------------------
 
-    n_prioritized = min(
-        budget_count,
-        n_positive_eligible,
+    if n_positive_eligible <= target_count:
+        allocation[admissible_indices] = 1.0
+
+        details = {
+            "n_eligible": n_eligible,
+            "target_count": target_count,
+            "n_positive_eligible": n_positive_eligible,
+            "expected_allocated": float(allocation.sum()),
+            "boundary_score": None,
+            "boundary_probability": 0.0,
+        }
+
+        return allocation, details
+
+    # ---------------------------------------------------------
+    # Rank admissible eligible individuals by predicted benefit
+    # ---------------------------------------------------------
+
+    order = np.argsort(
+        -admissible_scores,
+        kind="stable",
     )
 
-    selected_indices = ranked_indices[:n_prioritized]
+    ranked_indices = admissible_indices[order]
+    ranked_scores = admissible_scores[order]
 
-    allocation[selected_indices] = 1.0
+    # ---------------------------------------------------------
+    # Determine the score at the intervention boundary
+    # ---------------------------------------------------------
+
+    boundary_position = int(np.ceil(target_count)) - 1
+
+    boundary_score = ranked_scores[boundary_position]
+
+    # Individuals with scores strictly greater than the boundary
+    # score are fully allocated.
+    above_boundary_mask = ranked_scores > boundary_score
+
+    above_boundary_indices = ranked_indices[
+        above_boundary_mask
+    ]
+
+    allocation[above_boundary_indices] = 1.0
+
+    n_above_boundary = len(above_boundary_indices)
+
+    # ---------------------------------------------------------
+    # Identify everyone tied at the boundary
+    # ---------------------------------------------------------
+
+    boundary_mask = ranked_scores == boundary_score
+
+    boundary_indices = ranked_indices[boundary_mask]
+
+    n_boundary = len(boundary_indices)
+
+    # Remaining expected capacity after fully allocating all
+    # individuals above the boundary.
+    remaining_capacity = (
+        target_count - n_above_boundary
+    )
+
+    boundary_probability = (
+        remaining_capacity / n_boundary
+    )
+
+    # Numerical protection
+    boundary_probability = float(
+        np.clip(
+            boundary_probability,
+            0.0,
+            1.0,
+        )
+    )
+
+    # Give every individual sharing the boundary score the
+    # same fractional allocation probability.
+    allocation[boundary_indices] = (
+        boundary_probability
+    )
+
+    # ---------------------------------------------------------
+    # Return allocation and diagnostics
+    # ---------------------------------------------------------
 
     details = {
         "n_eligible": n_eligible,
-        "budget_count": budget_count,
+        "target_count": target_count,
         "n_positive_eligible": n_positive_eligible,
-        "n_prioritized": n_prioritized,
+        "expected_allocated": float(
+            allocation[eligible_indices].sum()
+        ),
+        "boundary_score": float(boundary_score),
+        "boundary_probability": boundary_probability,
+        "n_above_boundary": n_above_boundary,
+        "n_boundary": n_boundary,
     }
 
     return allocation, details
