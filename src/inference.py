@@ -232,6 +232,260 @@ def bootstrap_policy_evaluation(
         }
     )
 
+def paired_utility_comparisons(
+    bootstrap_df,
+    point_values,
+    comparisons,
+):
+    
+    rows = []
+
+    for policy_a, policy_b in comparisons:
+
+        if policy_a not in bootstrap_df.columns:
+            raise ValueError(
+                f"{policy_a!r} not found in bootstrap draws."
+            )
+
+        if policy_b not in bootstrap_df.columns:
+            raise ValueError(
+                f"{policy_b!r} not found in bootstrap draws."
+            )
+
+        if policy_a not in point_values:
+            raise ValueError(
+                f"{policy_a!r} not found in point estimates."
+            )
+
+        if policy_b not in point_values:
+            raise ValueError(
+                f"{policy_b!r} not found in point estimates."
+            )
+
+        # -----------------------------------------------------
+        # Use only paired successful bootstrap replicates
+        # -----------------------------------------------------
+
+        paired = (
+            bootstrap_df[
+                [policy_a, policy_b]
+            ]
+            .dropna()
+        )
+
+        if paired.empty:
+            raise RuntimeError(
+                f"No paired bootstrap draws available for "
+                f"{policy_a} versus {policy_b}."
+            )
+
+        # -----------------------------------------------------
+        # Utility(A) - Utility(B)
+        #
+        # Since U = 1 - risk:
+        #
+        # U(A) - U(B)
+        # = risk(B) - risk(A)
+        # -----------------------------------------------------
+
+        diff = (
+            paired[policy_b].to_numpy(dtype=float)
+            - paired[policy_a].to_numpy(dtype=float)
+        )
+
+        point_diff = (
+            (1.0 - point_values[policy_a])
+            - (1.0 - point_values[policy_b])
+        )
+
+        # -----------------------------------------------------
+        # Percentile paired-bootstrap CI
+        # -----------------------------------------------------
+
+        ci_lower, ci_upper = np.quantile(
+            diff,
+            [0.025, 0.975],
+        )
+
+        # -----------------------------------------------------
+        # Two-sided bootstrap p-value
+        #
+        # Compare the fraction of paired bootstrap differences
+        # on either side of zero.
+        #
+        # The +1 correction prevents an estimated p-value of
+        # exactly zero with a finite number of replicates.
+        # -----------------------------------------------------
+
+        B_success = len(diff)
+
+        p_lower = (
+            np.sum(diff <= 0.0) + 1
+        ) / (
+            B_success + 1
+        )
+
+        p_upper = (
+            np.sum(diff >= 0.0) + 1
+        ) / (
+            B_success + 1
+        )
+
+        p_raw = min(
+            1.0,
+            2.0 * min(
+                p_lower,
+                p_upper,
+            ),
+        )
+
+        rows.append(
+            {
+                "Policy A":
+                    policy_a,
+
+                "Policy B":
+                    policy_b,
+
+                "Comparison":
+                    f"{policy_a} minus {policy_b}",
+
+                "Utility difference":
+                    float(point_diff),
+
+                "CI lower":
+                    float(ci_lower),
+
+                "CI upper":
+                    float(ci_upper),
+
+                "Raw p-value":
+                    float(p_raw),
+
+                "Successful paired replicates":
+                    int(B_success),
+            }
+        )
+
+    return pd.DataFrame(
+        rows
+    )
+
+
+def holm_adjustment(
+    comparisons_df,
+    pvalue_column="Raw p-value",
+    alpha=0.05,
+):
+   
+
+    result = comparisons_df.copy()
+
+    if pvalue_column not in result.columns:
+        raise ValueError(
+            f"{pvalue_column!r} is not present in the table."
+        )
+
+    p_values = result[
+        pvalue_column
+    ].to_numpy(
+        dtype=float
+    )
+
+    if np.any(
+        (p_values < 0.0)
+        | (p_values > 1.0)
+    ):
+        raise ValueError(
+            "All p-values must lie in [0, 1]."
+        )
+
+    m = len(
+        p_values
+    )
+
+    if m == 0:
+        result[
+            "Holm-adjusted p-value"
+        ] = []
+
+        result[
+            "Reject after Holm"
+        ] = []
+
+        return result
+
+    # ---------------------------------------------------------
+    # Sort p-values from smallest to largest
+    # ---------------------------------------------------------
+
+    order = np.argsort(
+        p_values
+    )
+
+    ordered_p = p_values[
+        order
+    ]
+
+    adjusted_ordered = np.empty(
+        m,
+        dtype=float,
+    )
+
+    # ---------------------------------------------------------
+    # Holm adjusted p-values:
+    #
+    # max_{j <= i} [(m-j+1) p_(j)]
+    # ---------------------------------------------------------
+
+    running_max = 0.0
+
+    for i, p_value in enumerate(
+        ordered_p
+    ):
+
+        multiplier = (
+            m - i
+        )
+
+        candidate = (
+            multiplier
+            * p_value
+        )
+
+        running_max = max(
+            running_max,
+            candidate,
+        )
+
+        adjusted_ordered[i] = min(
+            running_max,
+            1.0,
+        )
+
+    # Restore original comparison ordering
+    adjusted = np.empty(
+        m,
+        dtype=float,
+    )
+
+    adjusted[
+        order
+    ] = adjusted_ordered
+
+    result[
+        "Holm-adjusted p-value"
+    ] = adjusted
+
+    result[
+        "Reject after Holm"
+    ] = (
+        adjusted
+        < alpha
+    )
+
+    return result
+
     return (
         results,
         bootstrap_df,
