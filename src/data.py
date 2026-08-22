@@ -4,11 +4,29 @@ import numpy as np
 import pandas as pd
 
 
+# =============================================================
+# PIMA variables where zero is treated as missing
+# =============================================================
+
+PIMA_ZERO_AS_MISSING = [
+    "Glucose",
+    "BloodPressure",
+    "SkinThickness",
+    "Insulin",
+    "BMI",
+]
+
+
+# =============================================================
+# Load observational dataset
+# =============================================================
+
 def load_observational_data(config):
-    """
-    Load an observational dataset using its YAML configuration.
-    """
-    data_path = Path(config["experiment"]["data_path"])
+    
+
+    data_path = Path(
+        config["experiment"]["data_path"]
+    )
 
     if not data_path.exists():
         raise FileNotFoundError(
@@ -18,55 +36,127 @@ def load_observational_data(config):
     return pd.read_csv(data_path)
 
 
-def prepare_pima_cohort(df, config):
-    """
-    Construct a PIMA policy-specific complete-case cohort.
+# =============================================================
+# Prepare PIMA analytic cohort
+# =============================================================
 
-    The treatment indicator is created from the source variable and
-    threshold specified in the experiment YAML file.
-    """
+def prepare_pima_cohort(df, config):
+   
+
     df = df.copy()
 
-    treatment = config["experiment"]["treatment"]
-    outcome = config["experiment"]["outcome"]
+    # ---------------------------------------------------------
+    # 1. Treat conventional impossible-zero measurements
+    #    as missing
+    # ---------------------------------------------------------
 
-    treatment_col = treatment["column"]
-    source_col = treatment["source_column"]
-    threshold = treatment["threshold"]
-    outcome_col = outcome["column"]
+    for col in PIMA_ZERO_AS_MISSING:
 
-    # Construct adverse-state indicator.
-    df[treatment_col] = np.where(
-        df[source_col].notna(),
-        (df[source_col] >= threshold).astype(int),
+        if col in df.columns:
+
+            df[col] = df[col].replace(
+                0,
+                np.nan,
+            )
+
+    # ---------------------------------------------------------
+    # 2. Read treatment and outcome definitions from config
+    # ---------------------------------------------------------
+
+    treatment = config[
+        "experiment"
+    ][
+        "treatment"
+    ]
+
+    outcome = config[
+        "experiment"
+    ][
+        "outcome"
+    ]
+
+    treatment_col = treatment[
+        "column"
+    ]
+
+    source_col = treatment[
+        "source_column"
+    ]
+
+    threshold = float(
+        treatment[
+            "threshold"
+        ]
+    )
+
+    outcome_col = outcome[
+        "column"
+    ]
+
+  
+
+    df[
+        treatment_col
+    ] = np.where(
+
+        df[
+            source_col
+        ].notna(),
+
+        (
+            df[
+                source_col
+            ]
+            >= threshold
+        ).astype(int),
+
         np.nan,
     )
 
-    # Collect all covariates required by this experiment.
-    covariates = config["covariates"]
+   
+    covariates = config[
+        "covariates"
+    ]
 
     required_covariates = list(
         dict.fromkeys(
-            covariates["adjustment"]
-            + covariates["effect_modifiers"]
-            + covariates["clustering"]
+            covariates[
+                "adjustment"
+            ]
+            + covariates[
+                "effect_modifiers"
+            ]
+            + covariates[
+                "clustering"
+            ]
         )
     )
 
     required_columns = (
         required_covariates
-        + [outcome_col, treatment_col]
+        + [
+            outcome_col,
+            treatment_col,
+        ]
     )
 
-    # Policy-specific complete-case cohort.
+    
+
     analysis_df = (
         df
-        .dropna(subset=required_columns)
+        .dropna(
+            subset=required_columns
+        )
         .copy()
     )
 
-    analysis_df[treatment_col] = (
-        analysis_df[treatment_col].astype(int)
+    analysis_df[
+        treatment_col
+    ] = (
+        analysis_df[
+            treatment_col
+        ]
+        .astype(int)
     )
 
     return analysis_df
