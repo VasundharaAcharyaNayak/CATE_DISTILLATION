@@ -6,6 +6,10 @@ from src.dr_evaluator import (
 )
 
 
+# =============================================================
+# Bootstrap policy evaluation
+# =============================================================
+
 def bootstrap_policy_evaluation(
     Z,
     T,
@@ -38,34 +42,81 @@ def bootstrap_policy_evaluation(
         dtype=float,
     ).reshape(-1)
 
-    normalized_policies = {
-        name: np.asarray(
+    n = len(Y)
+
+    if not (
+        len(Z)
+        == len(T)
+        == n
+    ):
+        raise ValueError(
+            "Z, T, and Y must have equal numbers of rows."
+        )
+
+    # ---------------------------------------------------------
+    # Validate policies
+    # ---------------------------------------------------------
+
+    normalized_policies = {}
+
+    for name, shift_prob in policies.items():
+
+        s = np.asarray(
             shift_prob,
             dtype=float,
         ).reshape(-1)
-        for name, shift_prob
-        in policies.items()
-    }
 
-    # ---------------------------------------------------------
-    # Original-sample point estimates
-    # ---------------------------------------------------------
+        if len(s) != n:
+            raise ValueError(
+                f"{name!r} has policy length {len(s)}, "
+                f"but evaluation N={n}."
+            )
 
-    point_values, retained_fraction = (
-        dr_selective_shift_values_binary_y(
-            Z=Z,
-            T=T,
-            Y=Y,
-            policies=normalized_policies,
-            n_splits=n_splits,
-            trim=trim,
-            seed=crossfit_seed,
+        if not np.all(
+            np.isfinite(s)
+        ):
+            raise ValueError(
+                f"{name!r} contains non-finite policy values."
+            )
+
+        if np.any(
+            (s < 0.0)
+            | (s > 1.0)
+        ):
+            raise ValueError(
+                f"{name!r} contains shift probabilities "
+                "outside [0, 1]."
+            )
+
+        normalized_policies[
+            name
+        ] = s
+
+    if not normalized_policies:
+        raise ValueError(
+            "At least one policy must be supplied."
         )
+
+    # =========================================================
+    # Original-sample point estimates
+    # =========================================================
+
+    (
+        point_values,
+        retained_fraction,
+    ) = dr_selective_shift_values_binary_y(
+        Z=Z,
+        T=T,
+        Y=Y,
+        policies=normalized_policies,
+        n_splits=n_splits,
+        trim=trim,
+        seed=crossfit_seed,
     )
 
-    # ---------------------------------------------------------
-    # Bootstrap
-    # ---------------------------------------------------------
+    # =========================================================
+    # Joint paired bootstrap
+    # =========================================================
 
     rng = np.random.default_rng(
         seed
@@ -83,32 +134,44 @@ def bootstrap_policy_evaluation(
         int(B)
     ):
 
-        # Same evaluation-row resample for every policy
+        # Same evaluation-row resample for every policy.
         idx = rng.integers(
             0,
-            len(Y),
-            size=len(Y),
+            n,
+            size=n,
         )
 
-        # Frozen policy vectors follow the resampled rows
+        # Frozen policy vectors follow the sampled rows.
         boot_policies = {
-            name: shift_prob[idx]
+            name: shift_prob[
+                idx
+            ]
             for name, shift_prob
             in normalized_policies.items()
         }
 
         try:
 
-            values_b, _ = (
-                dr_selective_shift_values_binary_y(
-                    Z=Z[idx],
-                    T=T[idx],
-                    Y=Y[idx],
-                    policies=boot_policies,
-                    n_splits=n_splits,
-                    trim=trim,
-                    seed=crossfit_seed + b + 1,
-                )
+            (
+                values_b,
+                _,
+            ) = dr_selective_shift_values_binary_y(
+                Z=Z[
+                    idx
+                ],
+                T=T[
+                    idx
+                ],
+                Y=Y[
+                    idx
+                ],
+                policies=boot_policies,
+                n_splits=n_splits,
+                trim=trim,
+                seed=
+                    crossfit_seed
+                    + b
+                    + 1,
             )
 
         except (
@@ -123,15 +186,12 @@ def bootstrap_policy_evaluation(
             b
         )
 
-        for (
-            name,
-            value,
-        ) in values_b.items():
+        for name, value in values_b.items():
 
             draws[
                 name
             ].append(
-                value
+                float(value)
             )
 
     if not successful_ids:
@@ -139,26 +199,50 @@ def bootstrap_policy_evaluation(
             "All bootstrap evaluations failed."
         )
 
-    # ---------------------------------------------------------
-    # Policy-specific confidence intervals
-    # ---------------------------------------------------------
+    # Because all policies are evaluated jointly, every policy
+    # should have the same number of successful bootstrap draws.
+    draw_counts = {
+        name: len(values)
+        for name, values
+        in draws.items()
+    }
+
+    if len(
+        set(
+            draw_counts.values()
+        )
+    ) != 1:
+        raise RuntimeError(
+            "Bootstrap draws are not aligned across policies."
+        )
+
+    # =========================================================
+    # Policy-specific 95% confidence intervals
+    # =========================================================
 
     result_rows = []
 
     for name in normalized_policies:
 
         risk_draws = np.asarray(
-            draws[name],
+            draws[
+                name
+            ],
             dtype=float,
         )
 
         risk_lo, risk_hi = np.quantile(
             risk_draws,
-            [0.025, 0.975],
+            [
+                0.025,
+                0.975,
+            ],
         )
 
-        risk_point = (
-            point_values[name]
+        risk_point = float(
+            point_values[
+                name
+            ]
         )
 
         result_rows.append(
@@ -167,9 +251,7 @@ def bootstrap_policy_evaluation(
                     name,
 
                 "Policy risk":
-                    float(
-                        risk_point
-                    ),
+                    risk_point,
 
                 "Policy utility":
                     float(
@@ -177,8 +259,7 @@ def bootstrap_policy_evaluation(
                         - risk_point
                     ),
 
-                # Utility = 1 - risk, so the risk interval
-                # reverses when converted to utility.
+                # Utility = 1 - Risk, so CI limits reverse.
                 "Utility CI lower":
                     float(
                         1.0
@@ -192,16 +273,22 @@ def bootstrap_policy_evaluation(
                     ),
 
                 "Retained after overlap trimming":
-                    retained_fraction,
+                    float(
+                        retained_fraction
+                    ),
 
                 "Successful bootstrap replicates":
-                    len(
-                        risk_draws
+                    int(
+                        len(
+                            risk_draws
+                        )
                     ),
 
                 "Eligible evaluation count":
                     int(
-                        (T == 1).sum()
+                        (
+                            T == 1
+                        ).sum()
                     ),
 
                 "Expected shifted eligible":
@@ -219,11 +306,17 @@ def bootstrap_policy_evaluation(
         result_rows
     )
 
+    # ---------------------------------------------------------
     # One column per policy.
-    # These are POLICY-RISK draws.
+    #
+    # These are policy-RISK bootstrap draws.
+    # They are retained so paired utility-difference CIs can
+    # subsequently be calculated.
+    # ---------------------------------------------------------
+
     bootstrap_df = pd.DataFrame(
         {
-            name: pd.Series(
+            name: np.asarray(
                 values,
                 dtype=float,
             )
@@ -232,15 +325,34 @@ def bootstrap_policy_evaluation(
         }
     )
 
+    return (
+        results,
+        bootstrap_df,
+        point_values,
+    )
+
+
+# =============================================================
+# Paired policy-utility confidence intervals
+# =============================================================
+
 def paired_utility_comparisons(
     bootstrap_df,
     point_values,
     comparisons,
 ):
-    
+  
+
     rows = []
 
-    for policy_a, policy_b in comparisons:
+    for (
+        policy_a,
+        policy_b,
+    ) in comparisons:
+
+        # -----------------------------------------------------
+        # Validate requested policies
+        # -----------------------------------------------------
 
         if policy_a not in bootstrap_df.columns:
             raise ValueError(
@@ -263,80 +375,80 @@ def paired_utility_comparisons(
             )
 
         # -----------------------------------------------------
-        # Use only paired successful bootstrap replicates
+        # Retain only paired successful bootstrap replicates
         # -----------------------------------------------------
 
         paired = (
             bootstrap_df[
-                [policy_a, policy_b]
+                [
+                    policy_a,
+                    policy_b,
+                ]
             ]
             .dropna()
         )
 
         if paired.empty:
             raise RuntimeError(
-                f"No paired bootstrap draws available for "
+                "No paired bootstrap draws available for "
                 f"{policy_a} versus {policy_b}."
             )
 
         # -----------------------------------------------------
-        # Utility(A) - Utility(B)
-        #
-        # Since U = 1 - risk:
+        # Bootstrap utility difference
         #
         # U(A) - U(B)
-        # = risk(B) - risk(A)
+        # = [1 - R(A)] - [1 - R(B)]
+        # = R(B) - R(A)
         # -----------------------------------------------------
 
         diff = (
-            paired[policy_b].to_numpy(dtype=float)
-            - paired[policy_a].to_numpy(dtype=float)
-        )
-
-        point_diff = (
-            (1.0 - point_values[policy_a])
-            - (1.0 - point_values[policy_b])
+            paired[
+                policy_b
+            ].to_numpy(
+                dtype=float
+            )
+            -
+            paired[
+                policy_a
+            ].to_numpy(
+                dtype=float
+            )
         )
 
         # -----------------------------------------------------
-        # Percentile paired-bootstrap CI
+        # Original-sample utility difference
+        # -----------------------------------------------------
+
+        utility_a = float(
+            1.0
+            - point_values[
+                policy_a
+            ]
+        )
+
+        utility_b = float(
+            1.0
+            - point_values[
+                policy_b
+            ]
+        )
+
+        point_diff = float(
+            utility_a
+            - utility_b
+        )
+
+        # -----------------------------------------------------
+        # Percentile paired-bootstrap 95% CI
         # -----------------------------------------------------
 
         ci_lower, ci_upper = np.quantile(
             diff,
-            [0.025, 0.975],
-        )
-
-        # -----------------------------------------------------
-        # Two-sided bootstrap p-value
-        #
-        # Compare the fraction of paired bootstrap differences
-        # on either side of zero.
-        #
-        # The +1 correction prevents an estimated p-value of
-        # exactly zero with a finite number of replicates.
-        # -----------------------------------------------------
-
-        B_success = len(diff)
-
-        p_lower = (
-            np.sum(diff <= 0.0) + 1
-        ) / (
-            B_success + 1
-        )
-
-        p_upper = (
-            np.sum(diff >= 0.0) + 1
-        ) / (
-            B_success + 1
-        )
-
-        p_raw = min(
-            1.0,
-            2.0 * min(
-                p_lower,
-                p_upper,
-            ),
+            [
+                0.025,
+                0.975,
+            ],
         )
 
         rows.append(
@@ -347,147 +459,41 @@ def paired_utility_comparisons(
                 "Policy B":
                     policy_b,
 
-                "Comparison":
-                    f"{policy_a} minus {policy_b}",
+                "Utility A":
+                    utility_a,
 
-                "Utility difference":
-                    float(point_diff),
+                "Utility B":
+                    utility_b,
 
-                "CI lower":
-                    float(ci_lower),
+                "Utility difference (A-B)":
+                    point_diff,
 
-                "CI upper":
-                    float(ci_upper),
+                "95% CI lower":
+                    float(
+                        ci_lower
+                    ),
 
-                "Raw p-value":
-                    float(p_raw),
+                "95% CI upper":
+                    float(
+                        ci_upper
+                    ),
 
-                "Successful paired replicates":
-                    int(B_success),
+                "CI includes zero":
+                    bool(
+                        ci_lower
+                        <= 0.0
+                        <= ci_upper
+                    ),
+
+                "Successful paired bootstrap replicates":
+                    int(
+                        len(
+                            diff
+                        )
+                    ),
             }
         )
 
     return pd.DataFrame(
         rows
-    )
-
-
-def holm_adjustment(
-    comparisons_df,
-    pvalue_column="Raw p-value",
-    alpha=0.05,
-):
-   
-
-    result = comparisons_df.copy()
-
-    if pvalue_column not in result.columns:
-        raise ValueError(
-            f"{pvalue_column!r} is not present in the table."
-        )
-
-    p_values = result[
-        pvalue_column
-    ].to_numpy(
-        dtype=float
-    )
-
-    if np.any(
-        (p_values < 0.0)
-        | (p_values > 1.0)
-    ):
-        raise ValueError(
-            "All p-values must lie in [0, 1]."
-        )
-
-    m = len(
-        p_values
-    )
-
-    if m == 0:
-        result[
-            "Holm-adjusted p-value"
-        ] = []
-
-        result[
-            "Reject after Holm"
-        ] = []
-
-        return result
-
-    # ---------------------------------------------------------
-    # Sort p-values from smallest to largest
-    # ---------------------------------------------------------
-
-    order = np.argsort(
-        p_values
-    )
-
-    ordered_p = p_values[
-        order
-    ]
-
-    adjusted_ordered = np.empty(
-        m,
-        dtype=float,
-    )
-
-    # ---------------------------------------------------------
-    # Holm adjusted p-values:
-    #
-    # max_{j <= i} [(m-j+1) p_(j)]
-    # ---------------------------------------------------------
-
-    running_max = 0.0
-
-    for i, p_value in enumerate(
-        ordered_p
-    ):
-
-        multiplier = (
-            m - i
-        )
-
-        candidate = (
-            multiplier
-            * p_value
-        )
-
-        running_max = max(
-            running_max,
-            candidate,
-        )
-
-        adjusted_ordered[i] = min(
-            running_max,
-            1.0,
-        )
-
-    # Restore original comparison ordering
-    adjusted = np.empty(
-        m,
-        dtype=float,
-    )
-
-    adjusted[
-        order
-    ] = adjusted_ordered
-
-    result[
-        "Holm-adjusted p-value"
-    ] = adjusted
-
-    result[
-        "Reject after Holm"
-    ] = (
-        adjusted
-        < alpha
-    )
-
-    return result
-
-    return (
-        results,
-        bootstrap_df,
-        point_values,
     )
