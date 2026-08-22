@@ -170,65 +170,45 @@ def prepare_pima_cohort(df, config):
 # =============================================================
 # Prepare NHANES smoking-history analytic cohort
 # =============================================================
-
 def prepare_smoking_cohort(df, config):
    
 
     df = df.copy()
 
-    # ---------------------------------------------------------
-    # 1. Treatment and outcome columns
-    # ---------------------------------------------------------
+    experiment = config["experiment"]
+    covariates = config["covariates"]
 
-    treatment_col = config[
-        "experiment"
-    ][
-        "treatment"
-    ][
-        "column"
-    ]
-
-    outcome_col = config[
-        "experiment"
-    ][
-        "outcome"
-    ][
-        "column"
-    ]
+    treatment_col = experiment["treatment"]["column"]
+    outcome_col = experiment["outcome"]["column"]
 
     # ---------------------------------------------------------
-    # 2. Required smoking covariates
+    # Raw variables required for the smoking analytic cohort.
+    #
+    # IMPORTANT:
+    # `covariates["clustering"]` is a representation description
+    # ("MCA representation of effect_modifiers"), not a CSV column.
+    # MCA is created later by smoking_preprocessing.py.
     # ---------------------------------------------------------
-
-    covariates = config[
-        "covariates"
-    ]
 
     required_covariates = list(
         dict.fromkeys(
-            covariates[
-                "adjustment"
-            ]
-            + covariates[
-                "effect_modifiers"
-            ]
-            + covariates.get(
-                "clustering",
-                [],
-            )
+            covariates["adjustment"]
+            + covariates["effect_modifiers"]
         )
     )
 
-    required_columns = (
-        required_covariates
-        + [
-            outcome_col,
-            treatment_col,
-        ]
+    required_columns = list(
+        dict.fromkeys(
+            required_covariates
+            + [
+                treatment_col,
+                outcome_col,
+            ]
+        )
     )
 
     # ---------------------------------------------------------
-    # 3. Check required columns exist
+    # Validate columns
     # ---------------------------------------------------------
 
     missing_columns = [
@@ -244,37 +224,28 @@ def prepare_smoking_cohort(df, config):
         )
 
     # ---------------------------------------------------------
-    # 4. Complete-case analytic cohort
+    # Policy-specific complete-case cohort
     # ---------------------------------------------------------
 
-    analysis_df = (
+    df = (
         df
         .dropna(
             subset=required_columns
         )
         .copy()
+        .reset_index(
+            drop=True
+        )
     )
 
-    # ---------------------------------------------------------
-    # 5. Ensure binary treatment/outcome coding
-    # ---------------------------------------------------------
-
-    analysis_df[
-        treatment_col
-    ] = (
-        analysis_df[
-            treatment_col
-        ]
+    df[treatment_col] = (
+        df[treatment_col]
         .astype(int)
     )
 
-    analysis_df[
-        outcome_col
-    ] = (
-        analysis_df[
-            outcome_col
-        ]
+    df[outcome_col] = (
+        df[outcome_col]
         .astype(int)
     )
 
-    return analysis_df
+    return df
