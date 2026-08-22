@@ -759,7 +759,7 @@ def evaluate_teacher_student_fidelity(
     q=0.70,
     min_benefit=0.0,
     boundary_bandwidth=0.10,
-    boundary_min_n=10,
+    boundary_min_n=5,
     seed=7,
 ):
    
