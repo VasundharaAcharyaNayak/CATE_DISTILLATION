@@ -492,8 +492,7 @@ def run_smoking(
             evaluation_df=
                 evaluation_df,
 
-            effect_modifier_columns=
-                effect_modifier_cols,
+            effect_modifier_cols=effect_modifier_columns,
 
             confounder_columns=
                 confounder_cols,
