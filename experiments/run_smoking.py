@@ -494,7 +494,7 @@ def run_smoking(
 
             effect_modifier_cols=effect_modifier_cols,
 
-            confounder_columns=
+            confounder_cols=
                 confounder_cols,
 
             n_mca_components=
